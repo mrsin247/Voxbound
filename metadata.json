@@ -1,0 +1,6 @@
+{
+  "name": "VoxBound",
+  "description": "Import PDFs, EPUBs, DOCX, and text files to generate offline-ready audiobooks with Amazon Polly or offline device voices, featuring customizable read-along typography.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
