@@ -26,6 +26,11 @@ class OfflineTtsManager(context: Context) {
     private var tts: TextToSpeech? = null
     private var isReady = false
 
+    // Package name of the engine we are currently bound to (null = system default).
+    private var boundEnginePackage: String? = null
+    // True when Pocket TTS was requested but is not installed, so we fell back.
+    private var pocketTtsMissingNote = false
+
     private val _voices = MutableStateFlow<List<OfflineVoice>>(emptyList())
     val voices: StateFlow<List<OfflineVoice>> = _voices.asStateFlow()
 
@@ -38,10 +43,12 @@ class OfflineTtsManager(context: Context) {
         initializeTts()
     }
 
-    fun initializeTts() {
+    fun initializeTts(enginePackage: String? = null) {
         tts?.shutdown()
         isReady = false
-        tts = TextToSpeech(appContext) { status ->
+        boundEnginePackage = enginePackage
+        pocketTtsMissingNote = false
+        val listener = TextToSpeech.OnInitListener { status ->
             if (status == TextToSpeech.SUCCESS) {
                 isReady = true
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -62,6 +69,33 @@ class OfflineTtsManager(context: Context) {
                 _engineStatus.value = "Offline TTS unavailable on this device."
             }
         }
+        tts = if (enginePackage != null) {
+            TextToSpeech(appContext, listener, enginePackage)
+        } else {
+            TextToSpeech(appContext, listener)
+        }
+    }
+
+    /** True when the Pocket TTS app is installed and can serve as a TTS engine. */
+    fun isPocketTtsInstalled(): Boolean = runCatching {
+        appContext.packageManager.getPackageInfo(POCKET_TTS_PACKAGE, 0)
+        true
+    }.getOrDefault(false)
+
+    /**
+     * Bind the offline engine to Pocket TTS when requested and installed,
+     * otherwise to the system default engine. Safe to call on every
+     * preference change — a no-op when the bound engine already matches.
+     */
+    fun setEngine(usePocketTts: Boolean) {
+        val target: String? = if (usePocketTts && isPocketTtsInstalled()) {
+            POCKET_TTS_PACKAGE
+        } else {
+            null
+        }
+        pocketTtsMissingNote = usePocketTts && target == null
+        if (target == boundEnginePackage && tts != null) return
+        initializeTts(target)
     }
 
     fun refreshVoices() {
@@ -104,7 +138,14 @@ class OfflineTtsManager(context: Context) {
                 )
             )
         }
-        _engineStatus.value = "${_voices.value.size} offline voice(s) ready (no internet required)"
+        _engineStatus.value = when {
+            boundEnginePackage == POCKET_TTS_PACKAGE ->
+                "Pocket TTS · ${_voices.value.size} offline voice(s) ready (no internet required)"
+            pocketTtsMissingNote ->
+                "Pocket TTS not installed — system engine · ${_voices.value.size} offline voice(s) ready"
+            else ->
+                "${_voices.value.size} offline voice(s) ready (no internet required)"
+        }
     }
 
     fun previewVoice(
@@ -170,6 +211,13 @@ class OfflineTtsManager(context: Context) {
     }
 
     private fun friendlyOfflineVoiceName(voice: Voice): String {
+        // Pocket TTS voices are named plainly ("alba", "jean", clones by name) —
+        // show the name as-is instead of the "Narrator ALBA" fallback.
+        if (boundEnginePackage == POCKET_TTS_PACKAGE) {
+            val pretty = voice.name.replaceFirstChar { it.titlecase(Locale.US) }
+            val regionLabel = voice.locale.displayCountry.ifBlank { voice.locale.displayLanguage }
+            return "$pretty ($regionLabel)"
+        }
         val nameLower = voice.name.lowercase(Locale.US)
         val curatedPersona = CURATED_LOCAL_PERSONAS.entries
             .firstOrNull { nameLower.contains(it.key) }
@@ -195,6 +243,9 @@ class OfflineTtsManager(context: Context) {
     }
 
     companion object {
+        /** Package name of the Pocket TTS app, which exposes a system TTS engine. */
+        const val POCKET_TTS_PACKAGE = "com.timberpocket.tts"
+
         private val CURATED_LOCAL_PERSONAS = mapOf(
             "tpf" to "Aria · Warm Clear",
             "sfg" to "Clara · Classic Book",

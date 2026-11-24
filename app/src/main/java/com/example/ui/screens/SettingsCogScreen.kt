@@ -578,6 +578,30 @@ fun SettingsCogScreen(
                                     Spacer(Modifier.width(8.dp))
                                     Text("Install High-Quality System Voices")
                                 }
+
+                                // Pocket TTS: clone a voice in the Pocket TTS app, then
+                                // come back and tap Refresh above to see it here.
+                                if (voicePrefs.preferredProvider == VoiceProvider.POCKET_TTS) {
+                                    if (viewModel.isPocketTtsInstalled) {
+                                        OutlinedButton(
+                                            onClick = { viewModel.openPocketTtsForCloning() },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Clone a voice in Pocket TTS")
+                                        }
+                                        Text(
+                                            text = "Opens Pocket TTS — clone a voice, then come back and tap Refresh above to see it in the list.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.secondary
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "Pocket TTS isn't installed on this phone yet. Install it, then come back here — your Kokoro and cloned voices will show up as offline voices.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

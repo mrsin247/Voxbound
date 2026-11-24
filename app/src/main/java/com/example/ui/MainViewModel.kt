@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -32,6 +33,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -56,6 +58,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val extractor = DocumentTextExtractor(appContext)
     private val pollyClient = AmazonPollyClient()
     private val offlineTts = OfflineTtsManager(appContext)
+    val isPocketTtsInstalled: Boolean = offlineTts.isPocketTtsInstalled()
     private val networkMonitor = NetworkMonitor(appContext)
 
     private val playerController = AudiobookPlayerController(
@@ -111,6 +114,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _awsCredentials.value = savedCreds
             if (savedCreds.isConfigured && networkMonitor.isOnline.value) {
                 verifyAndSyncPollyVoices(savedCreds, silent = true)
+            }
+        }
+        // Keep the offline engine bound to the chosen provider: Pocket TTS
+        // when it is the preferred provider (and installed), system default
+        // otherwise. setEngine is a no-op when nothing changed, so rate and
+        // pitch slider drags do not re-init the engine.
+        viewModelScope.launch {
+            voicePreferences.collect { prefs ->
+                offlineTts.setEngine(prefs.preferredProvider == VoiceProvider.POCKET_TTS)
             }
         }
     }
@@ -255,6 +267,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 prefs.autoOfflineFallback
 
             val effectiveProvider = when {
+                requestedProvider == VoiceProvider.POCKET_TTS -> VoiceProvider.POCKET_TTS
                 requestedProvider == VoiceProvider.OFFLINE_DEVICE -> VoiceProvider.OFFLINE_DEVICE
                 !online || !creds.isConfigured -> {
                     if (prefs.autoOfflineFallback) {
@@ -303,7 +316,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         targetFormat = effectiveFormat,
                         booksDir = booksDir,
                         tempDir = tempDir,
-                        isFallback = useOfflineFallback
+                        isFallback = useOfflineFallback,
+                        provider = effectiveProvider
                     )
                 }
             } catch (e: Exception) {
@@ -412,7 +426,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         targetFormat: AudiobookFormat,
         booksDir: File,
         tempDir: File,
-        isFallback: Boolean
+        isFallback: Boolean,
+        provider: VoiceProvider
     ) {
         val pcmChunks = mutableListOf<ByteArray>()
         val chunkDurations = mutableListOf<Long>()
@@ -442,7 +457,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 outputFile = wavFile
             )
             if (!ok || !wavFile.exists() || wavFile.length() <= 44L) {
-                error("Offline TTS failed to synthesize part ${index + 1}. Ensure an offline system voice pack is installed.")
+                error(
+                    if (provider == VoiceProvider.POCKET_TTS) {
+                        "Offline TTS failed to synthesize part ${index + 1}. Ensure Pocket TTS is installed and has a voice ready."
+                    } else {
+                        "Offline TTS failed to synthesize part ${index + 1}. Ensure an offline system voice pack is installed."
+                    }
+                )
             }
 
             val pcm = withContext(Dispatchers.IO) { AudioMuxerAndEncoder.extractPcmFromWav(wavFile) }
@@ -491,8 +512,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             audioFileSizeBytes = outFile.length(),
             durationMs = totalDurationMs,
             lastPositionMs = 0L,
-            voiceUsedLabel = "Offline · ${prefs.offlineVoiceLabel}",
-            voiceProvider = VoiceProvider.OFFLINE_DEVICE.name,
+            voiceUsedLabel = "${if (provider == VoiceProvider.POCKET_TTS) "Pocket TTS" else "Offline"} · ${prefs.offlineVoiceLabel}",
+            voiceProvider = provider.name,
             updatedAt = System.currentTimeMillis()
         )
         repository.upsert(updated)
@@ -653,6 +674,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun buildInstallOfflineVoicesIntent() = offlineTts.buildInstallVoicesIntent()
+
+    /** Opens the Pocket TTS app so the user can clone a voice there, then come back. */
+    fun openPocketTtsForCloning() {
+        val intent = appContext.packageManager
+            .getLaunchIntentForPackage(OfflineTtsManager.POCKET_TTS_PACKAGE)
+        if (intent == null) {
+            _snackbarMessage.value = "Pocket TTS isn't installed on this phone."
+            return
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { appContext.startActivity(intent) }
+            .onFailure { _snackbarMessage.value = "Couldn't open Pocket TTS." }
+    }
 
     fun updateVoicePreferences(transform: (VoicePreferences) -> VoicePreferences) {
         viewModelScope.launch {

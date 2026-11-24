@@ -11,7 +11,8 @@ import kotlinx.serialization.Serializable
 
 enum class VoiceProvider(val displayName: String) {
     AMAZON_POLLY("Amazon Polly"),
-    OFFLINE_DEVICE("Offline Device Voice")
+    OFFLINE_DEVICE("Offline Device Voice"),
+    POCKET_TTS("Pocket TTS")
 }
 
 enum class PollyEngine(val apiValue: String, val label: String) {
