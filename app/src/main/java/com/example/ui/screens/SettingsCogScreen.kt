@@ -192,6 +192,30 @@ fun SettingsCogScreen(
                     list.take(36)
                 }
 
+                // Offline voices grouped by language, then gender — the
+                // flat list got too long to scan. English first, then
+                // Female / Male / Unknown inside each language. (Computed
+                // here, not inside the LazyColumn: remember() is a
+                // @Composable call and the column's content lambda is not
+                // a @Composable context.)
+                val groupedOfflineVoices = remember(offlineVoices) {
+                    val genderOrder = listOf("Female", "Male", "Unknown")
+                    offlineVoices
+                        .groupBy {
+                            Locale.forLanguageTag(it.localeTag).displayLanguage
+                                .ifBlank { it.localeTag }
+                        }
+                        .toSortedMap(
+                            compareByDescending<String> { it == "English" }.thenBy { it }
+                        )
+                        .mapValues { (_, voices) ->
+                            voices.groupBy { it.gender }
+                                .toSortedMap(
+                                    compareBy { genderOrder.indexOf(it).takeIf { i -> i >= 0 } ?: Int.MAX_VALUE }
+                                )
+                        }
+                }
+
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
@@ -613,26 +637,6 @@ fun SettingsCogScreen(
                         }
                     }
 
-                    // Grouped by language, then gender — the flat list got
-                    // too long to scan. English first, then Female / Male /
-                    // Unknown inside each language.
-                    val groupedOfflineVoices = remember(offlineVoices) {
-                        val genderOrder = listOf("Female", "Male", "Unknown")
-                        offlineVoices
-                            .groupBy {
-                                Locale.forLanguageTag(it.localeTag).displayLanguage
-                                    .ifBlank { it.localeTag }
-                            }
-                            .toSortedMap(
-                                compareByDescending<String> { it == "English" }.thenBy { it }
-                            )
-                            .mapValues { (_, voices) ->
-                                voices.groupBy { it.gender }
-                                    .toSortedMap(
-                                        compareBy { genderOrder.indexOf(it).takeIf { i -> i >= 0 } ?: Int.MAX_VALUE }
-                                    )
-                            }
-                    }
                     groupedOfflineVoices.forEach { (language, byGender) ->
                         byGender.forEach { (gender, voices) ->
                             item(key = "offline_header_${language}_$gender") {
