@@ -80,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.AwsCredentials
+import com.example.data.model.OfflineVoice
 import com.example.data.model.PollyEngine
 import com.example.data.model.VoiceProvider
 import com.example.data.network.AmazonPollyClient
@@ -192,28 +193,46 @@ fun SettingsCogScreen(
                     list.take(36)
                 }
 
-                // Offline voices grouped by language, then gender — the
-                // flat list got too long to scan. English first, then
-                // Female / Male / Unknown inside each language. (Computed
-                // here, not inside the LazyColumn: remember() is a
-                // @Composable call and the column's content lambda is not
-                // a @Composable context.)
-                val groupedOfflineVoices = remember(offlineVoices) {
-                    val genderOrder = listOf("Female", "Male", "Unknown")
-                    offlineVoices
-                        .groupBy {
-                            Locale.forLanguageTag(it.localeTag).displayLanguage
-                                .ifBlank { it.localeTag }
-                        }
-                        .toSortedMap(
-                            compareByDescending<String> { it == "English" }.thenBy { it }
-                        )
-                        .mapValues { (_, voices) ->
-                            voices.groupBy { it.gender }
-                                .toSortedMap(
-                                    compareBy { genderOrder.indexOf(it).takeIf { i -> i >= 0 } ?: Int.MAX_VALUE }
-                                )
-                        }
+                // Cascading voice picker: Language -> Gender -> Quality,
+                // then the matching voices. Defaults follow the currently
+                // selected voice so the list opens on what you already
+                // use; "All" opens it back up. (Computed here, not inside
+                // the LazyColumn: remember() is a @Composable call and the
+                // column's content lambda is not a @Composable context.)
+                fun offlineLanguageOf(voice: OfflineVoice): String =
+                    Locale.forLanguageTag(voice.localeTag).displayLanguage
+                        .ifBlank { voice.localeTag }
+                val selectedOfflineVoice =
+                    offlineVoices.firstOrNull { it.id == voicePrefs.offlineVoiceId }
+                var pickerLanguage by remember(offlineVoices) {
+                    mutableStateOf(selectedOfflineVoice?.let(::offlineLanguageOf) ?: "All")
+                }
+                var pickerGender by remember(offlineVoices) {
+                    mutableStateOf(selectedOfflineVoice?.gender ?: "All")
+                }
+                var pickerQuality by remember(offlineVoices) {
+                    mutableStateOf(selectedOfflineVoice?.qualityTier ?: "All")
+                }
+                val pickerLanguages = remember(offlineVoices) {
+                    listOf("All") + offlineVoices.map(::offlineLanguageOf).distinct()
+                        .sortedWith(compareByDescending<String> { it == "English" }.thenBy { it })
+                }
+                val pickerGenders = remember(offlineVoices) {
+                    listOf("All", "Female", "Male", "Unknown")
+                        .filter { it == "All" || offlineVoices.any { v -> v.gender == it } }
+                }
+                val pickerQualities = remember(offlineVoices) {
+                    listOf("All") + offlineVoices.map { it.qualityTier }.distinct()
+                        .sortedWith(compareBy { if (it == "Local HD") 0 else if (it == "High") 1 else 2 })
+                }
+                val filteredOfflineVoices = remember(
+                    offlineVoices, pickerLanguage, pickerGender, pickerQuality
+                ) {
+                    offlineVoices.filter { voice ->
+                        (pickerLanguage == "All" || offlineLanguageOf(voice) == pickerLanguage) &&
+                            (pickerGender == "All" || voice.gender == pickerGender) &&
+                            (pickerQuality == "All" || voice.qualityTier == pickerQuality)
+                    }
                 }
 
                 LazyColumn(
@@ -637,17 +656,46 @@ fun SettingsCogScreen(
                         }
                     }
 
-                    groupedOfflineVoices.forEach { (language, byGender) ->
-                        byGender.forEach { (gender, voices) ->
-                            item(key = "offline_header_${language}_$gender") {
-                                Text(
-                                    text = "$language · $gender",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                    // The picker: three drop-downs that narrow the list —
+                    // Language, then Gender, then Quality — with the
+                    // matching voices underneath.
+                    item(key = "offline_voice_filters") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                VoicePickerDropdown(
+                                    label = "Language",
+                                    options = pickerLanguages,
+                                    selected = pickerLanguage,
+                                    onSelected = { pickerLanguage = it }
+                                )
+                                VoicePickerDropdown(
+                                    label = "Gender",
+                                    options = pickerGenders,
+                                    selected = pickerGender,
+                                    onSelected = { pickerGender = it }
+                                )
+                                VoicePickerDropdown(
+                                    label = "Quality",
+                                    options = pickerQualities,
+                                    selected = pickerQuality,
+                                    onSelected = { pickerQuality = it }
                                 )
                             }
-                            items(voices, key = { "offline_${it.id}_${it.displayName}" }) { oVoice ->
+                            Text(
+                                text = if (filteredOfflineVoices.isEmpty()) {
+                                    "No voices match those picks — try All on one of them."
+                                } else {
+                                    "${filteredOfflineVoices.size} voice(s) match"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    items(filteredOfflineVoices, key = { "offline_${it.id}_${it.displayName}" }) { oVoice ->
                         val isSelected = voicePrefs.offlineVoiceId == oVoice.id
                         Surface(
                             modifier = Modifier
@@ -707,8 +755,6 @@ fun SettingsCogScreen(
                             }
                         }
                     }
-                        }
-                    }
                 }
             } else {
                 LazyColumn(
@@ -726,6 +772,48 @@ fun SettingsCogScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * One drop-down in the cascading offline-voice picker. Same pattern as the
+ * AWS Region picker above: a read-only field that opens a menu.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VoicePickerDropdown(
+    label: String,
+    options: List<String>,
+    selected: String,
+    onSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it }
+    ) {
+        OutlinedTextField(
+            value = selected,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable)
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        onSelected(option)
+                        expanded = false
+                    }
+                )
             }
         }
     }
