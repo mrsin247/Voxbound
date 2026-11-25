@@ -85,6 +85,7 @@ import com.example.data.model.VoiceProvider
 import com.example.data.network.AmazonPollyClient
 import com.example.ui.MainViewModel
 import com.example.ui.PollyVerifyStatus
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -612,7 +613,37 @@ fun SettingsCogScreen(
                         }
                     }
 
-                    items(offlineVoices, key = { "offline_${it.id}_${it.displayName}" }) { oVoice ->
+                    // Grouped by language, then gender — the flat list got
+                    // too long to scan. English first, then Female / Male /
+                    // Unknown inside each language.
+                    val groupedOfflineVoices = remember(offlineVoices) {
+                        val genderOrder = listOf("Female", "Male", "Unknown")
+                        offlineVoices
+                            .groupBy {
+                                Locale.forLanguageTag(it.localeTag).displayLanguage
+                                    .ifBlank { it.localeTag }
+                            }
+                            .toSortedMap(
+                                compareByDescending<String> { it == "English" }.thenBy { it }
+                            )
+                            .mapValues { (_, voices) ->
+                                voices.groupBy { it.gender }
+                                    .toSortedMap(
+                                        compareBy { genderOrder.indexOf(it).takeIf { i -> i >= 0 } ?: Int.MAX_VALUE }
+                                    )
+                            }
+                    }
+                    groupedOfflineVoices.forEach { (language, byGender) ->
+                        byGender.forEach { (gender, voices) ->
+                            item(key = "offline_header_${language}_$gender") {
+                                Text(
+                                    text = "$language · $gender",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                                )
+                            }
+                            items(voices, key = { "offline_${it.id}_${it.displayName}" }) { oVoice ->
                         val isSelected = voicePrefs.offlineVoiceId == oVoice.id
                         Surface(
                             modifier = Modifier
@@ -670,6 +701,8 @@ fun SettingsCogScreen(
                                     }
                                 }
                             }
+                        }
+                    }
                         }
                     }
                 }

@@ -46,7 +46,10 @@ data class OfflineVoice(
     val displayName: String,
     val localeTag: String,
     val qualityTier: String,
-    val isNetworkFree: Boolean
+    val isNetworkFree: Boolean,
+    // "Female", "Male", or "Unknown" — the engine rarely reports this, so
+    // known Pocket TTS voices are mapped by name and the rest stay Unknown.
+    val gender: String = "Unknown"
 )
 
 enum class ReaderFontKey(val label: String) {

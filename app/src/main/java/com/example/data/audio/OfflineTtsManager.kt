@@ -121,7 +121,8 @@ class OfflineTtsManager(context: Context) {
                     voice.quality >= Voice.QUALITY_HIGH -> "High"
                     else -> "Standard"
                 },
-                isNetworkFree = true
+                isNetworkFree = true,
+                gender = resolveVoiceGender(voice)
             )
         }
 
@@ -210,6 +211,22 @@ class OfflineTtsManager(context: Context) {
         engine.language = Locale.US
     }
 
+    /**
+     * Gender for grouping the voice picker. Engines almost never report it
+     * in Voice.features, so known Pocket TTS voices are mapped by name;
+     * anything else we cannot tell stays "Unknown" rather than guessed.
+     */
+    private fun resolveVoiceGender(voice: Voice): String {
+        val featureNames = runCatching { voice.features }.getOrNull().orEmpty()
+            .map { it.lowercase(Locale.US) }
+        if (featureNames.any { it.contains("female") }) return "Female"
+        if (featureNames.any { it.contains("male") }) return "Male"
+        if (boundEnginePackage == POCKET_TTS_PACKAGE) {
+            return POCKET_VOICE_GENDERS[voice.name.lowercase(Locale.US)] ?: "Unknown"
+        }
+        return "Unknown"
+    }
+
     private fun friendlyOfflineVoiceName(voice: Voice): String {
         // Pocket TTS voices are named plainly ("alba", "jean", clones by name) —
         // show the name as-is instead of the "Narrator ALBA" fallback.
@@ -245,6 +262,18 @@ class OfflineTtsManager(context: Context) {
     companion object {
         /** Package name of the Pocket TTS app, which exposes a system TTS engine. */
         const val POCKET_TTS_PACKAGE = "com.timberpocket.tts"
+
+        /** Built-in Kokoro voices in Pocket TTS, by lowercase name. Clones are not in here — their gender is unknown to the engine. */
+        private val POCKET_VOICE_GENDERS = mapOf(
+            "alba" to "Female",
+            "azelma" to "Female",
+            "cosette" to "Female",
+            "eponine" to "Female",
+            "fantine" to "Female",
+            "javert" to "Male",
+            "jean" to "Male",
+            "marius" to "Male"
+        )
 
         private val CURATED_LOCAL_PERSONAS = mapOf(
             "tpf" to "Aria · Warm Clear",
