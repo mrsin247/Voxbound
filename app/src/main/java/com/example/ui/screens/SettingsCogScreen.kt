@@ -210,7 +210,13 @@ fun SettingsCogScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text("Default Narration Engine", style = MaterialTheme.typography.titleMedium)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // FlowRow (not Row): three chips no longer fit on one
+                                // phone-width line, and a plain Row clips the third
+                                // one off the right edge with no way to reach it.
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
                                     VoiceProvider.entries.forEach { provider ->
                                         FilterChip(
                                             selected = voicePrefs.preferredProvider == provider,
